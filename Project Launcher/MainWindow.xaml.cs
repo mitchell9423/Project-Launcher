@@ -12,9 +12,7 @@ using Google.Apis.Download;
 using Google.Apis.Util.Store;
 using System.Threading.Tasks;
 using Project_Launcher.Files;
-using Project_Launcher.GoogleDrive;
 using System.Net.Http;
-using System.ComponentModel;
 using System.Windows.Threading;
 
 namespace Project_Launcher
