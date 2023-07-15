@@ -13,43 +13,65 @@ using Google.Apis.Util.Store;
 using System.Threading.Tasks;
 using Project_Launcher.Files;
 using Project_Launcher.GoogleDrive;
+using System.Net.Http;
+using System.ComponentModel;
+using System.Windows.Threading;
 
 namespace Project_Launcher
 {
-	enum LauncherStatus
-	{
-		Ready,
-		Failed,
-		Downloading
-	}
-
 	/// <summary>
 	/// Interaction logic for MainWindow.xaml
 	/// </summary>
 	public partial class MainWindow : Window
 	{
-		//defined scope.
-		private static string[] Scopes = { DriveService.Scope.DriveReadonly };
-
-		internal LauncherStatus Status { get; private set; } = LauncherStatus.Downloading;
-
-		private string playButtonText;
-		private string versionText;
-
 		private Files.FileInfo credentials;
 		private Files.FileInfo versionFile;
 		private Files.FileInfo gameZip;
 		private Files.FileInfo gameExe;
 
-		private void UpdateUIText()
-		{
-			do
-			{
-				PlayButton.Content = "Downloading...";
-			} while (Status != LauncherStatus.Ready);
+		//defined scope.
+		private static string[] Scopes = { DriveService.Scope.DriveReadonly };
 
-			PlayButton.Content = "Play Game";
-			VersionText.Text = versionText;
+		private LauncherState state = LauncherState.Main;
+		internal LauncherState State
+		{
+			get { return state; }
+			set
+			{
+				if (state != value)
+				{
+					state = value;
+					ChangeState(value);
+				}
+			}
+		}
+
+		private LauncherStatus status = LauncherStatus.Updating;
+		internal LauncherStatus Status
+		{
+			get { return status; }
+			set
+			{
+				if (status != value)
+				{
+					status = value;
+					UpdatePlayButtonText(value);
+				}
+			}
+		}
+
+		private string version = "0.0.0";
+		internal string Version
+		{
+			get { return version; }
+			set
+			{
+				if (version != value)
+				{
+					version = value;
+					UpdateVersionText(value);
+				}
+			}
 		}
 
 		public MainWindow()
@@ -58,94 +80,196 @@ namespace Project_Launcher
 			LoadFileInfo();
 		}
 
+		private void ChangeState(LauncherState _state)
+		{
+			Dispatcher.Invoke(() => {
+
+				PlayButton.Visibility = _state == LauncherState.Main ? Visibility.Hidden : Visibility.Visible;
+				ViewGames.Visibility = _state == LauncherState.Main ? Visibility.Hidden : Visibility.Visible;
+				Biosphere.Visibility = _state == LauncherState.Main ? Visibility.Visible : Visibility.Hidden;
+
+				switch (_state)
+				{
+					case LauncherState.Main:
+						break;
+					case LauncherState.Biosphere:
+						GetFileInfo(EFolder.BiosphereGameFiles, EFile.Biosphere);
+						Task.Run(() => CheckForUpdates());
+						break;
+					default:
+						break;
+				}
+
+			});
+		}
+
+		private void UpdateVersionText(string _version)
+		{
+			Dispatcher.Invoke(() => {
+				VersionText.Text = _version;
+			});
+		}
+
+		private void UpdatePlayButtonText(LauncherStatus _status)
+		{
+			Dispatcher.Invoke(() => {
+				switch (_status)
+				{
+					case LauncherStatus.Ready:
+						PlayButton.Content = "Play Game";
+						break;
+					case LauncherStatus.Failed:
+						break;
+					case LauncherStatus.Downloading:
+						PlayButton.Content = "Downloading...";
+						break;
+					default:
+						break;
+				}
+			});
+		}
+
 		private void LoadFileInfo()
 		{
 			FileManager.LoadFileInfo();
 
-			FileFolder fileFolder = FileManager.GetFolder("AuthorizationFiles");
-			credentials = fileFolder.GetFileInfo("Credentials");
+			FileFolder fileFolder = FileManager.GetFolder(EFolder.AuthorizationFiles);
+			credentials = fileFolder.GetFileInfo(EFile.Credentials);
+		}
 
-			fileFolder = FileManager.GetFolder("BiosphereGameFiles");
-			versionFile = fileFolder.GetFileInfo("VersionFile");
-			gameZip = fileFolder.GetFileInfo("Biosphere.zip");
-			gameExe = fileFolder.GetFileInfo("Biosphere.exe");
+		private void GetFileInfo(EFolder folder, EFile file)
+		{
+			FileFolder fileFolder = FileManager.GetFolder(folder);
+			versionFile = fileFolder.GetFileInfo(EFile.Version);
+			gameZip = fileFolder.GetFileInfo(file, EExt.zip);
+			gameExe = fileFolder.GetFileInfo(file, EExt.exe);
 		}
 
 		private void Window_ContentRendered(object sender, EventArgs e)
 		{
-			CheckForUpdates();
-			UpdateUIText();
+			ChangeState(LauncherState.Main);
 		}
 
-		private void CheckForUpdates()
+		private async void CheckForUpdates()
 		{
-			WebClient webClient = new WebClient();
+			HttpClient webClient  = new HttpClient();
 
-			Version onlineVersion = new Version(webClient.DownloadString(versionFile.DownloadURL));
-
-			if (File.Exists(versionFile.Path))
+			try
 			{
-				Version localVersion = new Version(File.ReadAllText(versionFile.Path));
-				VersionText.Text = localVersion.ToString();
+				// Send HTTP request
+				HttpResponseMessage response = await webClient.GetAsync(versionFile.DownloadURL);
 
-				try
+				// Ensure we get a successful status code back
+				response.EnsureSuccessStatusCode();
+
+				byte[] fileContents = await response.Content.ReadAsByteArrayAsync();
+
+				Console.WriteLine($"File downloaded successfully. Size: {fileContents.Length} bytes");
+
+				Version onlineVersion = new Version(System.Text.Encoding.UTF8.GetString(fileContents));
+
+				if (File.Exists(versionFile.Path))
 				{
-					if (onlineVersion.IsDifferentVersion(localVersion))
+					Version localVersion = new Version(File.ReadAllText(versionFile.Path));
+
+					Version = localVersion.ToString();
+
+					try
 					{
-						DownLoadGameFiles(gameZip.Id, true, onlineVersion);
+						if (onlineVersion.IsDifferentVersion(localVersion))
+						{
+							DownLoadGameFiles(gameZip.Id, true, onlineVersion);
+						}
+						else
+						{
+							Status = LauncherStatus.Ready;
+						}
 					}
-					else
+					catch (Exception message)
 					{
-						Status = LauncherStatus.Ready;
+						Status = LauncherStatus.Failed;
+
+						MessageBox.Show($"Check For Update Failed: {message}");
 					}
 				}
-				catch (Exception message)
+				else
 				{
-					Status = LauncherStatus.Failed;
-					MessageBox.Show($"Check For Update Failed: {message}");
+					DownLoadGameFiles(gameZip.Id, false, onlineVersion);
 				}
 			}
-			else
+			catch (HttpRequestException e)
 			{
-				DownLoadGameFiles(gameZip.Id, false, onlineVersion);
+				Console.WriteLine("\nException Caught!");
+				Console.WriteLine("Message :{0} ", e.Message);
 			}
 		}
 
-		private void DownLoadGameFiles(string fileId, bool isUpdate, Version _onlineVersion)
+		private async void DownLoadGameFiles(string fileId, bool isUpdate, Version _onlineVersion)
 		{
 			try
 			{
 				if (!isUpdate)
 				{
-					using (WebClient webClient = new WebClient())
+					using (HttpClient webClient = new HttpClient())
 					{
-						_onlineVersion = new Version(webClient.DownloadString(versionFile.DownloadURL));
+						Status = LauncherStatus.Downloading;
+
+						// Send HTTP request
+						HttpResponseMessage response = await webClient.GetAsync(versionFile.DownloadURL);
+
+						// Ensure we get a successful status code back
+						response.EnsureSuccessStatusCode();
+
+						byte[] fileContents = await response.Content.ReadAsByteArrayAsync();
+
+						Console.WriteLine($"File downloaded successfully. Size: {fileContents.Length} bytes");
+
+						_onlineVersion = new Version(System.Text.Encoding.UTF8.GetString(fileContents));
+						//_onlineVersion = new Version(fileContents.ToString());
 					}
 				}
 
 				FilesResource.GetRequest request = GetService().Files.Get(fileId);
 
-				FileStream stream1 = new FileStream(gameZip.Path, FileMode.Create, FileAccess.ReadWrite);
+				string directory = Path.GetDirectoryName(gameZip.Path);
 
-				request.DownloadAsync(stream1);
+				// Check if directory exists
+				if (Directory.Exists(directory))
+				{
+					// Delete the directory and all of its contents
+					Directory.Delete(directory, true);
+				}
+
+				// Create the directory if it doesn't exist
+				Directory.CreateDirectory(directory);
+
+				FileStream stream1 = new FileStream(gameZip.Path, FileMode.CreateNew, FileAccess.ReadWrite);
 
 				request.MediaDownloader.ProgressChanged += (IDownloadProgress progress) =>
 				{
 					switch (progress.Status)
 					{
+						case DownloadStatus.Downloading:
+							{
+								Console.WriteLine($"Downloaded {progress.BytesDownloaded} bytes so far...");
+							}
+							break;
 						case DownloadStatus.Completed:
 							{
+								Console.WriteLine("Download completed.");
 								DownloadCompletedCallback(_onlineVersion.ToString(), stream1);
-								break;
 							}
+							break;
 					}
 				};
 
+				await request.DownloadAsync(stream1);
 
 			}
 			catch (Exception message)
 			{
 				Status = LauncherStatus.Failed;
+
 				MessageBox.Show($"Install Failed: {message}");
 			}
 		}
@@ -156,16 +280,19 @@ namespace Project_Launcher
 
 			try
 			{
-				ZipFile.ExtractToDirectory(gameZip.Path, gameZip.Path);
+				ZipFile.ExtractToDirectory(gameZip.Path, Path.GetDirectoryName(gameZip.Path));
 				File.Delete(gameZip.Path);
 
 				File.WriteAllText(versionFile.Path, _onlineVersion);
+
 				Status = LauncherStatus.Ready;
-				versionText = _onlineVersion;
+
+				Version = _onlineVersion;
 			}
 			catch (Exception message)
 			{
 				Status = LauncherStatus.Failed;
+
 				MessageBox.Show($"Download Failed: {message}");
 			}
 		}
@@ -200,9 +327,10 @@ namespace Project_Launcher
 					Scopes,
 					"user",
 					CancellationToken.None,
-					new FileDataStore(credentials.Path, true)).Result;
-				Console.WriteLine("Credential file saved to: " + credentials.Path);
+					new FileDataStore(credPath, true)).Result;
+				Console.WriteLine("Credential file saved to: " + credPath);
 			}
+			//new FileDataStore(credentials.Path, true)).Result;
 		}
 
 		class MyWebClient : WebClient
@@ -231,47 +359,26 @@ namespace Project_Launcher
 				CheckForUpdates();
 			}
 		}
-	}
 
-	struct Version
-	{
-		internal static Version zero = new Version(0, 0, 0);
-
-		private short major;
-		private short minor;
-		private short subMinor;
-
-		internal Version(short _major, short _minor, short _subMinor)
+		private void MenuButton_Click(object sender, RoutedEventArgs e)
 		{
-			major = _major;
-			minor = _minor;
-			subMinor = _subMinor;
-		}
-
-		internal Version(string _version)
-		{
-			string[] _versionString = _version.Split('.');
-			if (_versionString.Length != 3)
+			if (e.Source is System.Windows.Controls.Button button)
 			{
-				major = 0;
-				minor = 0;
-				subMinor = 0;
-				return;
+
+				Console.WriteLine(button.Name.ToString());
+
+				switch (button.Name.ToString())
+				{
+					case "Biosphere":
+						State = LauncherState.Biosphere;
+						break;
+					case "ViewGames":
+						State = LauncherState.Main;
+						break;
+					default:
+						break;
+				}
 			}
-
-			major = short.Parse(_versionString[0]);
-			minor = short.Parse(_versionString[1]);
-			subMinor = short.Parse(_versionString[2]);
-		}
-
-		internal bool IsDifferentVersion(Version _otherVersion)
-		{
-			return major != _otherVersion.major ? minor != _otherVersion.minor ? subMinor != _otherVersion.subMinor : false : false;
-		}
-
-		public override string ToString()
-		{
-			return $"{major}.{minor}.{subMinor}";
 		}
 	}
 }

@@ -7,15 +7,30 @@ namespace Project_Launcher.Files
     {
         private List<FileInfo> files = new List<FileInfo>();
 
-        public void AddFileInfo(string _name, string _id = "", string _subPath = "") => files.Add(new FileInfo(_name, _id, _subPath));
-        public FileInfo GetFileInfo(string _name)
+        public void AddFileInfo(EFile _name, EExt ext = EExt.None, string _id = "", EFolder _subFolder = EFolder.None)
         {
-            if (_name.Contains("."))
-                return files.Find((file) => file.FileName == _name);
-            else 
-                return files.Find((file) => file.Name == _name);
+            if (ext == EExt.exe)
+            {
+                files.Add(new FileInfo($"{_name}.{ext}", _id, $"{_subFolder}/{_name}"));
+            }
+			else
+            {
+                files.Add(new FileInfo($"{_name}.{ext}", _id, _subFolder.ToString()));
+            }
         }
-        public object GetFile(string _name) => GetFileInfo(_name).File;
+
+        public FileInfo GetFileInfo(EFile _name, EExt ext = EExt.None)
+        {
+            if (ext == EExt.None)
+            {
+                return files.Find((file) => file.Name == _name.ToString());
+            }
+			else
+            {
+                return files.Find((file) => file.FileName == $"{_name}.{ext}");
+            }
+        }
+        public object GetFile(EFile _name) => GetFileInfo(_name).File;
 
         //// File Path Components
         //private const string VERSIONFILENAME = "Version.txt";

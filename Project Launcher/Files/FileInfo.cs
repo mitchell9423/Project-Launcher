@@ -11,7 +11,7 @@ namespace Project_Launcher.Files
     {
         protected virtual string BaseURL => "https://drive.google.com/uc?export=download&id=";
         internal virtual string SharedLink { get => $"https:////drive.google.com//file/d//{Id}//view?usp=sharing"; }
-        internal virtual string DownloadURL => System.IO.Path.Combine(BaseURL, Id);
+        internal virtual string DownloadURL => $"{BaseURL}{Id}";
 
         internal string Name => GetName(FileName);
         internal string FileName { get; private set; }
